@@ -56,9 +56,13 @@ typedef struct
 
 
 /************************ グローバル変数宣言 ************************/
-MCP25625_Message message = { 0 };
-_SW_Flag		 sw_flag = { 0 };
-TimeCounter		 timer	 = { 0 };
+MCP25625_Message message			 = { 0 };
+_SW_Flag		 sw_flag			 = { 0 };
+TimeCounter		 timer				 = { 0 };
+ClockSettings	 clock_settings		 = { 0, 10, 0, CLOCK_RULE_NONE, 0 };
+uint8_t			 turn_start_target	 = 0;
+uint8_t			 turn_start_retry_ms = 0;
+uint8_t			 turn_start_sequence = 0;
 
 uint8_t			 seg_cnt	  = 0;
 volatile uint8_t main_sw_flag = 0;
@@ -73,7 +77,6 @@ void	 enable_disp_seg(uint8_t enable);
 void	 enable_extenal_INT_and_Timer(uint8_t enable);
 void	 set_timer(uint8_t hour, uint8_t minute, uint8_t second);
 void	 add_fischer_time(void);
-uint8_t	 game_settings(ClockSettings* settings);
 void	 clear_message(MCP25625_Message* message);
 _SW_Flag get_sw(void);
 uint8_t	 mode_select(void);
@@ -113,13 +116,20 @@ void enable_disp_seg(uint8_t enable)
  */
 void enable_extenal_INT_and_Timer(uint8_t enable)
 {
-	INTCONbits.INT0IF = 0;
-	main_sw_flag	  = 0;
+	uint8_t gie_state = INTCONbits.GIE;
 
+	INTCONbits.GIE	  = 0;
+	INTCONbits.INT0IE = 0;
+	T0CONbits.TMR0ON  = 0;
 	INTCONbits.INT0IF = 0;
-	INTCONbits.INT0IE = enable;
 	INTCONbits.TMR0IF = 0;
-	T0CONbits.TMR0ON  = enable;
+	main_sw_flag	  = 0;
+	if (enable != 0)
+	{
+		INTCONbits.INT0IE = 1;
+		T0CONbits.TMR0ON  = 1;
+	}
+	INTCONbits.GIE = gie_state;
 }
 
 /**
@@ -158,108 +168,6 @@ void add_fischer_time(void)
 	}
 }
 
-void draw_game_setting_row(ClockSettings* settings, uint8_t row, uint8_t selected)
-{
-	const char* rule_names[3] = { "NONE", "FISCHER", "DELAY" };
-	char		line[24];
-	uint16_t	y = 45 + (row * 25);
-
-	ST7789_StringSize("                    ", 0, y, COLOR_WHITE, COLOR_WHITE, 2);
-	if (row == 0)
-		sprintf(line, "HOUR: %02u", (unsigned int)settings->hours);
-	else if (row == 1)
-		sprintf(line, "MIN : %02u", (unsigned int)settings->minutes);
-	else if (row == 2)
-		sprintf(line, "SEC : %02u", (unsigned int)settings->seconds);
-	else if (row == 3)
-		sprintf(line, "RULE: %s", rule_names[settings->rule]);
-	else
-		sprintf(line, "VALUE: %02u SEC", (unsigned int)settings->rule_seconds);
-	ST7789_StringSize_centing(line, y, selected == row ? COLOR_RED : COLOR_BLACK, COLOR_WHITE, 2);
-}
-
-uint8_t game_settings(ClockSettings* settings)
-{
-	uint8_t selected = 0;
-	uint8_t previous_selected;
-	uint8_t previous_hours;
-	uint8_t previous_minutes;
-	uint8_t previous_seconds;
-	uint8_t previous_rule;
-	uint8_t previous_rule_seconds;
-
-	ST7789_FillScreen(COLOR_WHITE);
-	ST7789_StringSize_centing("GAME SETTINGS", 20, COLOR_BLACK, COLOR_WHITE, 2);
-	ST7789_StringSize_centing("UP/DOWN: SELECT", 180, COLOR_BLACK, COLOR_WHITE, 1);
-	ST7789_StringSize_centing("LEFT/RIGHT: CHANGE", 190, COLOR_BLACK, COLOR_WHITE, 1);
-	ST7789_StringSize_centing("A: START   B: BACK", 200, COLOR_BLACK, COLOR_WHITE, 1);
-	draw_game_setting_row(settings, 0, selected);
-	draw_game_setting_row(settings, 1, selected);
-	draw_game_setting_row(settings, 2, selected);
-	draw_game_setting_row(settings, 3, selected);
-	draw_game_setting_row(settings, 4, selected);
-
-	while (1)
-	{
-		previous_selected = selected;
-		sw_flag			  = get_sw();
-		if (sw_flag.data.single.up) selected = (selected + 4) % 5;
-		if (sw_flag.data.single.down) selected = (selected + 1) % 5;
-		if (selected != previous_selected)
-		{
-			draw_game_setting_row(settings, previous_selected, selected);
-			draw_game_setting_row(settings, selected, selected);
-		}
-
-		if (sw_flag.data.single.left || sw_flag.data.single.right)
-		{
-			int8_t change		  = sw_flag.data.single.right ? 1 : -1;
-			previous_hours		  = settings->hours;
-			previous_minutes	  = settings->minutes;
-			previous_seconds	  = settings->seconds;
-			previous_rule		  = settings->rule;
-			previous_rule_seconds = settings->rule_seconds;
-
-			if (selected == 0)
-			{
-				if (change > 0 && settings->hours < 98) settings->hours++;
-				if (change < 0 && settings->hours > 0) settings->hours--;
-			}
-			else if (selected == 1)
-			{
-				if (change > 0 && settings->minutes < 59) settings->minutes++;
-				if (change < 0 && settings->minutes > 0) settings->minutes--;
-			}
-			else if (selected == 2)
-			{
-				if (change > 0 && settings->seconds < 59) settings->seconds++;
-				if (change < 0 && settings->seconds > 0) settings->seconds--;
-			}
-			else if (selected == 3)
-			{
-				settings->rule = (settings->rule + (change > 0 ? 1 : 2)) % 3;
-				if (settings->rule == CLOCK_RULE_NONE)
-					settings->rule_seconds = 0;
-				else if (settings->rule_seconds == 0)
-					settings->rule_seconds = 5;
-			}
-			else if (settings->rule != CLOCK_RULE_NONE)
-			{
-				if (change > 0 && settings->rule_seconds < 30) settings->rule_seconds++;
-				if (change < 0 && settings->rule_seconds > 1) settings->rule_seconds--;
-			}
-
-			if (settings->hours != previous_hours) draw_game_setting_row(settings, 0, selected);
-			if (settings->minutes != previous_minutes) draw_game_setting_row(settings, 1, selected);
-			if (settings->seconds != previous_seconds) draw_game_setting_row(settings, 2, selected);
-			if (settings->rule != previous_rule) draw_game_setting_row(settings, 3, selected);
-			if (settings->rule_seconds != previous_rule_seconds) draw_game_setting_row(settings, 4, selected);
-		}
-		if (sw_flag.data.single.a) return 1;
-		if (sw_flag.data.single.b) return 0;
-		__delay_ms(10);
-	}
-}
 
 /**
  * @brief 次の人に手番を渡す
@@ -269,19 +177,23 @@ uint8_t game_settings(ClockSettings* settings)
  */
 void next_turn(uint8_t* turn_order, uint8_t turn)
 {
-	uint32_t id		  = 0;
-	timer.delay_ticks = timer.delay_flag ? (uint16_t)timer.rule_seconds * 100 : 0;
+	uint32_t id			= 0;
+	timer.delay_ticks	= timer.delay_flag ? (uint16_t)timer.rule_seconds * 100 : 0;
+	turn_start_target	= 0;
+	turn_start_retry_ms = 0;
+	turn_start_sequence++;
 
 	if (turn_order[turn] == 0x01)
 	{
-		T0CONbits.TMR0ON  = 1;
-		INTCONbits.INT0IF = 0;
-		INTCONbits.INT0IE = 1;
+		enable_extenal_INT_and_Timer(ENABLE);
 	}
 	else
 	{
-		id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_TURN_START, turn_order[turn]);
-		while (MCP25625_Send(id, 0, 0) != MCP_OK);
+		enable_extenal_INT_and_Timer(DISABLE);
+		turn_start_target	= turn_order[turn];
+		turn_start_retry_ms = 10;
+		id					= CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_TURN_START, turn_order[turn]);
+		while (MCP25625_Send(id, &turn_start_sequence, 1) != MCP_OK);
 	}
 }
 
@@ -384,7 +296,7 @@ uint8_t mode_select(void)
  */
 void game_mode(uint8_t mode)
 {
-	ClockSettings settings		= { 0, 10, 0, CLOCK_RULE_NONE, 0 };
+	ClockSettings settings		= clock_settings;
 	uint8_t		  turn_order[8] = { 0 };
 	uint8_t		  turn			= 0;
 	uint8_t		  member_num	= 0;
@@ -392,11 +304,13 @@ void game_mode(uint8_t mode)
 	int8_t		  game_end_flag = 0;
 	uint8_t		  ret			= MCP_ERROR;
 	int8_t		  retry_cnt		= 10;
+	uint8_t		  child_index;
+	uint8_t		  ready_flags[7]	= { 0 };
+	uint8_t		  ready_retry_ms[7] = { 0 };
+	uint8_t		  ready_count		= 0;
 
 	uint32_t id = 0;
 	uint8_t	 start_data[5];
-
-	if (mode == 0 && !game_settings(&settings)) return;
 
 	MCP25625_SetOneShot(ENABLE);
 
@@ -419,126 +333,190 @@ void game_mode(uint8_t mode)
 		else
 			ST7789_StringSize_centing("COUNT UP MODE", 10, COLOR_BLACK, COLOR_WHITE, 2);
 
+		ret = connection_mode(&member_num);
+		if (ret == 0) goto GAME_END;
 
-		/* 参加募集通知 */
-		id = CAN_CreateExtendedId(CAN_DEST_BROADCAST, CAN_CMD_JOIN_OPEN, 0x0000);
-		while (MCP25625_Send(id, 0, 0) != MCP_OK);
 
-		if (connection_mode(&member_num))
+		buzzer();
+		ret = decide_turn(turn_order, member_num);
+		if (ret == 0) goto GAME_END;
+
+		ST7789_FillScreen(COLOR_WHITE);
+		ST7789_StringSize_centing("GAME START!", 80, COLOR_BLACK, COLOR_WHITE, 2);
+		ST7789_StringSize_centing("Stop/ReStart->SW_A", 160, COLOR_BLACK, COLOR_WHITE, 2);
+		ST7789_StringSize_centing("END->SW_B", 180, COLOR_BLACK, COLOR_WHITE, 2);
+		/* 参加者にゲームスタートを通知 */
+		for (uint16_t i = 0; i < member_num; i++)
 		{
-			buzzer();
-			decide_turn(turn_order, member_num);
-
-			ST7789_FillScreen(COLOR_WHITE);
-			ST7789_StringSize_centing("GAME START!", 80, COLOR_BLACK, COLOR_WHITE, 2);
-			ST7789_StringSize_centing("Stop/ReStart->SW_A", 160, COLOR_BLACK, COLOR_WHITE, 2);
-			ST7789_StringSize_centing("END->SW_B", 180, COLOR_BLACK, COLOR_WHITE, 2);
-			/* 参加者にゲームスタートを通知 */
-			for (uint16_t i = 0; i < member_num; i++)
+			id			  = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_GAME_START, ASSIGN_ID[i]);
+			start_data[0] = settings.hours;
+			start_data[1] = settings.minutes;
+			start_data[2] = settings.seconds;
+			start_data[3] = settings.rule;
+			start_data[4] = settings.rule_seconds;
+			while (MCP25625_Send(id, start_data, sizeof(start_data)) != MCP_OK);
+			ready_retry_ms[i] = 50;
+		}
+		while (ready_count < member_num)
+		{
+			if (can_flag != 0)
 			{
-				id			  = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_GAME_START, ASSIGN_ID[i]);
-				start_data[0] = settings.hours;
-				start_data[1] = settings.minutes;
-				start_data[2] = settings.seconds;
-				start_data[3] = settings.rule;
-				start_data[4] = settings.rule_seconds;
-				while (MCP25625_Send(id, start_data, sizeof(start_data)) != MCP_OK);
-			}
-			member_num++; /* 親機も台数に混ぜる */
-
-			if (mode == 0)
-			{
-				timer.increment = -1;
-				set_timer(settings.hours, settings.minutes, settings.seconds);
-				timer.fischer_flag = settings.rule == CLOCK_RULE_FISCHER;
-				timer.delay_flag   = settings.rule == CLOCK_RULE_DELAY;
-				timer.rule_seconds = settings.rule_seconds;
-			}
-			else
-			{
-				timer.increment = 1;
-				set_timer(0, 0, 0);
-				timer.fischer_flag = 0;
-				timer.delay_flag   = 0;
-				timer.rule_seconds = 0;
-			}
-
-			buzzer();
-
-			enable_extenal_INT_and_Timer(DISABLE);
-			enable_disp_seg(ENABLE);
-			turn = 0;
-			next_turn(turn_order, turn);
-
-			while (1)
-			{
-				sw_flag = get_sw();
-
-				if (turn_order[turn] == 0x01) /* 自機の手番か */
+				can_flag = 0;
+				while (MCP25625_Receive(&message) == MCP_OK)
 				{
-					if (main_sw_flag != 0)
+					if (message.command == CAN_CMD_GAME_READY)
 					{
-						/* 手番終了 */
-						add_fischer_time();
-						buzzer();
-						enable_extenal_INT_and_Timer(DISABLE);
-
-						turn = (turn + 1) % member_num;
-						next_turn(turn_order, turn);
+						for (child_index = 0; child_index < member_num; child_index++)
+						{
+							if (message.targetId == ASSIGN_ID[child_index]) break;
+						}
+						if ((child_index < member_num) && (ready_flags[child_index] == 0))
+						{
+							ready_flags[child_index] = 1;
+							ready_count++;
+						}
 					}
+					clear_message(&message);
+				}
+			}
+			for (child_index = 0; child_index < member_num; child_index++)
+			{
+				if (ready_flags[child_index] == 0)
+				{
+					if (ready_retry_ms[child_index] == 0)
+					{
+						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_GAME_START, ASSIGN_ID[child_index]);
+						while (MCP25625_Send(id, start_data, sizeof(start_data)) != MCP_OK);
+						ready_retry_ms[child_index] = 50;
+					}
+					else
+					{
+						ready_retry_ms[child_index]--;
+					}
+				}
+			}
+			__delay_ms(1);
+		}
+		member_num++; /* 親機も台数に混ぜる */
+
+		if (mode == 0)
+		{
+			timer.increment = -1;
+			set_timer(settings.hours, settings.minutes, settings.seconds);
+			timer.fischer_flag = settings.rule == CLOCK_RULE_FISCHER;
+			timer.delay_flag   = settings.rule == CLOCK_RULE_DELAY;
+			timer.rule_seconds = settings.rule_seconds;
+		}
+		else
+		{
+			timer.increment = 1;
+			set_timer(0, 0, 0);
+			timer.fischer_flag = 0;
+			timer.delay_flag   = 0;
+			timer.rule_seconds = 0;
+		}
+
+		buzzer();
+
+		enable_extenal_INT_and_Timer(DISABLE);
+		enable_disp_seg(ENABLE);
+		turn = 0;
+		next_turn(turn_order, turn);
+
+		while (1)
+		{
+			sw_flag = get_sw();
+			if (can_flag != 0)
+			{
+				can_flag = 0;
+				while (MCP25625_Receive(&message) == MCP_OK)
+				{
+					if (message.command == CAN_CMD_TURN_END)
+					{
+						for (child_index = 0; child_index < (member_num - 1); child_index++)
+						{
+							if (message.targetId == ASSIGN_ID[child_index]) break;
+						}
+						if (child_index < (member_num - 1))
+						{
+							id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_TURN_END_ACK, message.targetId);
+							while (MCP25625_Send(id, 0, 0) != MCP_OK);
+							if ((turn_order[turn] != 0x01) && (message.targetId == turn_order[turn]) && (message.length >= 1) && (message.data[0] == turn_start_sequence))
+							{
+								add_fischer_time();
+								turn = (turn + 1) % member_num;
+								next_turn(turn_order, turn);
+							}
+						}
+					}
+					else if ((message.command == CAN_CMD_TURN_START_ACK) && (message.targetId == turn_start_target) && (message.length >= 1) &&
+							 (message.data[0] == turn_start_sequence))
+					{
+						turn_start_target	= 0;
+						turn_start_retry_ms = 0;
+					}
+					clear_message(&message);
+				}
+			}
+			if (turn_start_target != 0)
+			{
+				if (turn_start_retry_ms == 0)
+				{
+					id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_TURN_START, turn_start_target);
+					while (MCP25625_Send(id, &turn_start_sequence, 1) != MCP_OK);
+					turn_start_retry_ms = 10;
 				}
 				else
 				{
-					/* 受信処理 */
-					if (can_flag != 0)
-					{
-						if (MCP25625_Receive(&message) == MCP_OK)
-						{
-							can_flag = 0;
-
-							/* 次の手番 */
-							if (message.command == CAN_CMD_TURN_END)
-							{
-								if (message.targetId == turn_order[turn])
-								{
-									add_fischer_time();
-									turn = (turn + 1) % member_num;
-									next_turn(turn_order, turn);
-								}
-							}
-							clear_message(&message);
-						}
-					}
+					turn_start_retry_ms--;
+					__delay_ms(1);
 				}
+			}
 
-				/* ゲーム一時停止／再開 */
-				if (sw_flag.data.single.a)
+			if (turn_order[turn] == 0x01) /* 自機の手番か */
+			{
+				if (main_sw_flag != 0)
 				{
-					sw_flag.data.single.a = 0;
+					/* 手番終了 */
+					add_fischer_time();
 					buzzer();
+					enable_extenal_INT_and_Timer(DISABLE);
 
-					if (turn_order[turn] == 0x01)
-					{
-						enable_extenal_INT_and_Timer(stop_flag);
-					}
-					else
-					{
-						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_GAME_STOP + stop_flag, turn_order[turn]);
-						while (MCP25625_Send(id, 0, 0) != MCP_OK);
-					}
-					if (stop_flag)
-						ST7789_StringSize_centing("GAME START!", 80, COLOR_BLACK, COLOR_WHITE, 2);
-					else
-						ST7789_StringSize_centing(" GAME STOP ", 80, COLOR_BLACK, COLOR_WHITE, 2);
-					stop_flag = 1 - stop_flag;
+					turn = (turn + 1) % member_num;
+					next_turn(turn_order, turn);
 				}
+			}
 
-				/* ゲーム中断 */
-				if (sw_flag.data.single.b)
+			/* ゲーム一時停止／再開 */
+			if (sw_flag.data.single.a)
+			{
+				sw_flag.data.single.a = 0;
+				buzzer();
+
+				if (turn_order[turn] == 0x01)
 				{
-					sw_flag.data.single.b = 0;
-					break;
+					enable_extenal_INT_and_Timer(stop_flag);
 				}
+				else
+				{
+					id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_GAME_STOP + stop_flag, turn_order[turn]);
+					if (stop_flag)
+						while (MCP25625_Send(id, &turn_start_sequence, 1) != MCP_OK);
+					else
+						while (MCP25625_Send(id, 0, 0) != MCP_OK);
+				}
+				if (stop_flag)
+					ST7789_StringSize_centing("GAME START!", 80, COLOR_BLACK, COLOR_WHITE, 2);
+				else
+					ST7789_StringSize_centing(" GAME STOP ", 80, COLOR_BLACK, COLOR_WHITE, 2);
+				stop_flag = 1 - stop_flag;
+			}
+
+			/* ゲーム中断 */
+			if (sw_flag.data.single.b)
+			{
+				sw_flag.data.single.b = 0;
+				break;
 			}
 		}
 	}
@@ -558,6 +536,7 @@ void game_mode(uint8_t mode)
 		}
 	}
 
+GAME_END:
 	/* ゲーム終了処理 */
 	enable_extenal_INT_and_Timer(DISABLE);
 	enable_disp_seg(DISABLE);
@@ -594,37 +573,45 @@ uint8_t connection_mode(uint8_t* num)
 
 	ST7789_StringSize("CONNECT_NUM: 0", 30, 100, COLOR_BLACK, COLOR_WHITE, 2);
 	sw_flag.data.full = 0;
+
+	/* 参加募集通知 */
+	id = CAN_CreateExtendedId(CAN_DEST_BROADCAST, CAN_CMD_JOIN_OPEN, 0x0000);
+	while (MCP25625_Send(id, 0, 0) != MCP_OK);
+
 	while (1)
 	{
 		/* 受信処理 */
 		if (can_flag != 0)
 		{
-			if (MCP25625_Receive(&message) == MCP_OK)
+			can_flag = 0;
+			while (MCP25625_Receive(&message) == MCP_OK)
 			{
-				can_flag = 0;
-
 				if (message.command == CAN_CMD_JOIN_REQUEST)
 				{
 					/* 参加要求があった場合、送られてきた仮IDをリストに追加 */
-					for (i = 0; i < deviceNum + 1; i++)
+					for (i = 0; i < deviceNum; i++)
 					{
-						if (message.targetId == temp_list[deviceNum]) break;
+						if (message.targetId == temp_list[i]) break;
 					}
 
-					if (i > deviceNum)
+					if (i == deviceNum)
 					{
-						/* リストにない仮IDだった場合、正式なIDを割り当てて送信 */
-						/** @todo 仮IDとASSIGN_IDが被らないように */
-						temp_list[deviceNum]	  = message.targetId;
-						resister_state[deviceNum] = TEMP_REGISTER;
+						if (deviceNum < 7)
+						{
+							/* 新しい仮IDに正式なIDを割り当てる */
+							temp_list[deviceNum]	  = message.targetId;
+							resister_state[deviceNum] = TEMP_REGISTER;
 
-						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_ID, message.targetId);
-						while (MCP25625_Send(id, &ASSIGN_ID[deviceNum], 1) != MCP_OK);
-						deviceNum++;
+							id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_ID, message.targetId);
+							while (MCP25625_Send(id, &ASSIGN_ID[deviceNum], 1) != MCP_OK);
+							deviceNum++;
+						}
 					}
 					else
 					{
-						/** @todo 再送要求 */
+						/* 再送要求には同じ正式IDを返す */
+						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_ID, message.targetId);
+						while (MCP25625_Send(id, &ASSIGN_ID[i], 1) != MCP_OK);
 					}
 				}
 				else if (message.command == CAN_CMD_ASSIGN_ACK)
@@ -632,19 +619,17 @@ uint8_t connection_mode(uint8_t* num)
 					/* 子機が正式IDを正常に受信して、返答してきた */
 					for (i = 0; i < deviceNum; i++)
 					{
-						if (message.targetId == temp_list[i])
-							if (message.data[0] == ASSIGN_ID[i]) break;
+						if ((message.length >= 1) && (message.targetId == temp_list[i]) && (message.data[0] == ASSIGN_ID[i])) break;
 					}
 
-					if (i < deviceNum)
+					if ((i < deviceNum) && (message.length >= 1))
 					{
-						if (resister_state[deviceNum] != REGISTER_COMPLETE)
+						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_COMMIT, message.targetId);
+						while (MCP25625_Send(id, &ASSIGN_ID[i], 1) != MCP_OK);
+
+						if (resister_state[i] != REGISTER_COMPLETE)
 						{
-							resister_state[deviceNum] = REGISTER_COMPLETE;
-							/* 返答者の仮IDが割り当てた正式IDと一致していた */
-							/* 登録完了を通知する */
-							id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_COMMIT, message.targetId);
-							while (MCP25625_Send(id, &ASSIGN_ID[deviceNum], 1) != MCP_OK);
+							resister_state[i] = REGISTER_COMPLETE;
 							assignNum++;
 							str[0] = assignNum + 0x30;
 							ST7789_StringSize(str, 186, 100, COLOR_BLACK, COLOR_WHITE, 2);
@@ -697,11 +682,12 @@ uint8_t connection_mode(uint8_t* num)
  */
 uint8_t decide_turn(uint8_t* turn_order, uint8_t member_num)
 {
-	uint32_t id			   = 0;
-	uint8_t	 order_flag[8] = { 0 };
-	uint8_t	 order_num	   = 0;
-	uint8_t	 i			   = 0;
-
+	uint32_t id					  = 0;
+	uint8_t	 order_flag[8]		  = { 0 };
+	uint8_t	 assigned_position[7] = { 0 };
+	uint8_t	 order_num			  = 0;
+	uint8_t	 i					  = 0;
+	uint16_t retry_ms			  = 0;
 
 	ST7789_FillScreen(COLOR_WHITE);
 	ST7789_StringSize_centing("DECIDE THE TURN", 80, COLOR_BLACK, COLOR_WHITE, 2);
@@ -713,82 +699,258 @@ uint8_t decide_turn(uint8_t* turn_order, uint8_t member_num)
 		while (MCP25625_Send(id, 0, 0) != MCP_OK);
 	}
 
-
 	INTCONbits.INT0IF = 0;
 	INTCONbits.INT0IE = 1;
 	sw_flag.data.full = 0;
 
 	while (1)
 	{
-		if (order_num < (member_num + 1))
+		if (can_flag != 0)
 		{
-			/* 受信処理 */
-			if (can_flag != 0)
+			can_flag = 0;
+			while (MCP25625_Receive(&message) == MCP_OK)
 			{
-				if (MCP25625_Receive(&message) == MCP_OK)
+				if (message.command == CAN_CMD_TURN_QUEUE)
 				{
-					can_flag = 0;
-
-					if (message.command == CAN_CMD_TURN_QUEUE)
+					for (i = 0; i < member_num; i++)
 					{
-						/* 子機の手番を格納 */
-						for (i = 0; i < member_num; i++)
+						if (message.targetId == ASSIGN_ID[i]) break;
+					}
+					if (i < member_num)
+					{
+						if (order_flag[i + 1] == 0 && order_num < (member_num + 1))
 						{
-							if (message.targetId == ASSIGN_ID[i]) break;
+							order_flag[i + 1]	  = 1;
+							turn_order[order_num] = ASSIGN_ID[i];
+							order_num++;
+							assigned_position[i] = order_num;
 						}
-						if (i < member_num)
+						if (order_flag[i + 1] != 0)
 						{
-							if (order_flag[i + 1] == 0)
-							{
-								order_flag[i + 1]	  = 1;
-								turn_order[order_num] = ASSIGN_ID[i];
-								order_num++;
-								id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_TURN, ASSIGN_ID[i]);
-								while (MCP25625_Send(id, &order_num, 1) != MCP_OK);
-							}
+							id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_TURN, ASSIGN_ID[i]);
+							while (MCP25625_Send(id, &assigned_position[i], 1) != MCP_OK);
 						}
 					}
-					clear_message(&message);
 				}
-			}
-
-			/* 親機の手番を格納 */
-			if (main_sw_flag != 0)
-			{
-				enable_extenal_INT_and_Timer(DISABLE);
-				buzzer();
-
-				order_flag[0]		  = 1;
-				turn_order[order_num] = 0x01;
-				order_num++;
-				LATD = 0xB0 | order_num;
+				clear_message(&message);
 			}
 		}
-		sw_flag = get_sw();
 
-		/* ゲーム移行処理 */
+		if ((order_num < (member_num + 1)) && (main_sw_flag != 0) && (order_flag[0] == 0))
+		{
+			enable_extenal_INT_and_Timer(DISABLE);
+			buzzer();
+			order_flag[0]		  = 1;
+			turn_order[order_num] = 0x01;
+			order_num++;
+			LATD = 0xB0 | order_num;
+		}
+
+		if (order_num < (member_num + 1))
+		{
+			retry_ms++;
+			if (retry_ms >= 100)
+			{
+				for (i = 0; i < member_num; i++)
+				{
+					if (order_flag[i + 1] == 0)
+					{
+						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_DECIDE_TURN, ASSIGN_ID[i]);
+						while (MCP25625_Send(id, 0, 0) != MCP_OK);
+					}
+				}
+				retry_ms = 0;
+			}
+			__delay_ms(1);
+		}
+
+		sw_flag = get_sw();
 		if (sw_flag.data.single.a)
 		{
 			sw_flag.data.single.a = 0;
-
-			return 1;
+			if (order_num == (member_num + 1)) return 1;
 		}
 
-		/* 順番決めやり直し */
 		if (sw_flag.data.single.b)
 		{
 			sw_flag.data.single.b = 0;
 			for (i = 0; i < member_num; i++)
 			{
-				id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_TURN_CLEAR, ASSIGN_ID[member_num]);
+				id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_TURN_CLEAR, ASSIGN_ID[i]);
 				while (MCP25625_Send(id, 0, 0) != MCP_OK);
 			}
-
-			memset(order_flag, 0, 8);
+			memset(order_flag, 0, sizeof(order_flag));
+			memset(assigned_position, 0, sizeof(assigned_position));
+			memset(turn_order, 0, member_num + 1);
 			order_num		  = 0;
+			LATD			  = 0xB0;
+			retry_ms		  = 100;
 			INTCONbits.INT0IF = 0;
 			INTCONbits.INT0IE = 1;
 		}
+	}
+}
+void setting_mode(void)
+{
+	ClockSettings edited_settings = clock_settings;
+	const char*	  rule_names[3]	  = { "NONE", "FISCHER", "DELAY" };
+	char		  line[24];
+	uint8_t		  selected = 0;
+	uint8_t		  previous_selected;
+	uint8_t		  previous_hours;
+	uint8_t		  previous_minutes;
+	uint8_t		  previous_seconds;
+	uint8_t		  previous_rule;
+	uint8_t		  previous_rule_seconds;
+	uint8_t		  redraw_rows = 0x1F;
+	uint8_t		  value_step  = 1;
+	uint8_t		  row;
+	uint8_t		  minimum;
+	uint8_t		  maximum;
+	uint8_t*	  selected_value;
+	uint16_t	  y;
+	uint16_t	  color;
+
+	uint8_t	 ret		 = MCP_ERROR;
+	uint8_t	 retry_count = 10;
+	uint32_t id;
+
+	MCP25625_SetOneShot(ENABLE);
+	id	= CAN_CreateExtendedId(CAN_DEST_BROADCAST, CAN_CMD_MODE_SETTING, 0);
+	ret = MCP25625_Send(id, 0, 0);
+	while ((ret == MCP_ERROR) && (retry_count > 0))
+	{
+		retry_count--;
+		__delay_ms(100);
+		ret = MCP25625_Send(id, 0, 0);
+	}
+	MCP25625_SetOneShot(DISABLE);
+
+	// ST7789_FillScreen(COLOR_WHITE);
+	ST7789_StringSize_centing("CLOCK SETTINGS", 20, COLOR_BLACK, COLOR_WHITE, 2);
+	ST7789_StringSize_centing("CENTER: STEP 1/10", 165, COLOR_BLACK, COLOR_WHITE, 1);
+	ST7789_StringSize_centing("UP/DOWN: SELECT", 180, COLOR_BLACK, COLOR_WHITE, 1);
+	ST7789_StringSize_centing("LEFT/RIGHT: CHANGE", 190, COLOR_BLACK, COLOR_WHITE, 1);
+	ST7789_StringSize_centing("A: SAVE    B: BACK", 200, COLOR_BLACK, COLOR_WHITE, 1);
+
+	while (1)
+	{
+		for (row = 0; row < 5; row++)
+		{
+			if (redraw_rows & (1 << row))
+			{
+				y = 45 + (row * 25);
+				ST7789_StringSize("                    ", 0, y, COLOR_WHITE, COLOR_WHITE, 2);
+				if (row == 0)
+				{
+					if (value_step == 10)
+						sprintf(line, "HOUR x10: %02u", (unsigned int)edited_settings.hours);
+					else
+						sprintf(line, "HOUR x1 : %02u", (unsigned int)edited_settings.hours);
+				}
+				else if (row == 1)
+				{
+					if (value_step == 10)
+						sprintf(line, "MIN x10: %02u", (unsigned int)edited_settings.minutes);
+					else
+						sprintf(line, "MIN x1 : %02u", (unsigned int)edited_settings.minutes);
+				}
+				else if (row == 2)
+				{
+					if (value_step == 10)
+						sprintf(line, "SEC x10: %02u", (unsigned int)edited_settings.seconds);
+					else
+						sprintf(line, "SEC x1 : %02u", (unsigned int)edited_settings.seconds);
+				}
+				else if (row == 3)
+					sprintf(line, "RULE: %s", rule_names[edited_settings.rule]);
+				else
+				{
+					if (value_step == 10)
+						sprintf(line, "VALUE x10: %02u SEC", (unsigned int)edited_settings.rule_seconds);
+					else
+						sprintf(line, "VALUE x1 : %02u SEC", (unsigned int)edited_settings.rule_seconds);
+				}
+				color = selected == row ? COLOR_RED : COLOR_BLACK;
+				ST7789_StringSize_centing(line, y, color, COLOR_WHITE, 2);
+			}
+		}
+		redraw_rows = 0;
+
+		previous_selected = selected;
+		sw_flag			  = get_sw();
+		if (sw_flag.data.single.up) selected = (selected + 4) % 5;
+		if (sw_flag.data.single.down) selected = (selected + 1) % 5;
+		if (selected != previous_selected)
+		{
+			redraw_rows |= (1 << previous_selected) | (1 << selected);
+		}
+		if (sw_flag.data.single.center && selected != 3)
+		{
+			value_step = value_step == 1 ? 10 : 1;
+			redraw_rows |= 1 << selected;
+		}
+
+		if (sw_flag.data.single.left || sw_flag.data.single.right)
+		{
+			int8_t change		  = sw_flag.data.single.right ? 1 : -1;
+			previous_hours		  = edited_settings.hours;
+			previous_minutes	  = edited_settings.minutes;
+			previous_seconds	  = edited_settings.seconds;
+			previous_rule		  = edited_settings.rule;
+			previous_rule_seconds = edited_settings.rule_seconds;
+			selected_value		  = 0;
+			minimum				  = 0;
+			maximum				  = 0;
+
+			if (selected == 0)
+			{
+				selected_value = &edited_settings.hours;
+				maximum		   = 98;
+			}
+			else if (selected == 1)
+			{
+				selected_value = &edited_settings.minutes;
+				maximum		   = 59;
+			}
+			else if (selected == 2)
+			{
+				selected_value = &edited_settings.seconds;
+				maximum		   = 59;
+			}
+			else if (selected == 3)
+			{
+				edited_settings.rule = (edited_settings.rule + (change > 0 ? 1 : 2)) % 3;
+				if (edited_settings.rule == CLOCK_RULE_NONE)
+					edited_settings.rule_seconds = 0;
+				else if (edited_settings.rule_seconds == 0)
+					edited_settings.rule_seconds = 5;
+			}
+			else if (edited_settings.rule != CLOCK_RULE_NONE)
+			{
+				selected_value = &edited_settings.rule_seconds;
+				minimum		   = 1;
+				maximum		   = 30;
+			}
+			if (selected_value != 0)
+			{
+				if (change > 0 && *selected_value <= maximum - value_step) *selected_value += value_step;
+				if (change < 0 && *selected_value >= minimum + value_step) *selected_value -= value_step;
+			}
+
+			if (edited_settings.hours != previous_hours) redraw_rows |= 1 << 0;
+			if (edited_settings.minutes != previous_minutes) redraw_rows |= 1 << 1;
+			if (edited_settings.seconds != previous_seconds) redraw_rows |= 1 << 2;
+			if (edited_settings.rule != previous_rule) redraw_rows |= 1 << 3;
+			if (edited_settings.rule_seconds != previous_rule_seconds) redraw_rows |= 1 << 4;
+		}
+		if (sw_flag.data.single.a)
+		{
+			clock_settings = edited_settings;
+			return;
+		}
+		if (sw_flag.data.single.b) return;
+		__delay_ms(10);
 	}
 }
 
@@ -797,23 +959,6 @@ uint8_t decide_turn(uint8_t* turn_order, uint8_t member_num)
  * @brief 
  * 
  */
-void setting_mode(void)
-{
-	sw_flag.data.full = 0;
-	while (1)
-	{
-		sw_flag = get_sw();
-		if (sw_flag.data.single.b)
-		{
-			sw_flag.data.single.b = 0;
-			return;
-		}
-	}
-
-
-	/** @todo 切れ負け、モード設定？（ディレイ、フィッシャー）、秒読み */
-}
-
 /**
  * @brief 
  * 
@@ -926,7 +1071,6 @@ void main(void)
 	uint8_t	 data[20]		 = { "ok" };
 
 	Init(); /* MFB初期設定 */
-	__delay_ms(50);
 	enable_disp_seg(0);
 
 

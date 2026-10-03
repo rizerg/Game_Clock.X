@@ -8,8 +8,8 @@
 #define _XTAL_FREQ 40000000UL
 #endif
 
-#define TFT_WIDTH 240U
-#define TFT_HEIGHT 240U
+#define TFT_WIDTH 240
+#define TFT_HEIGHT 240
 
 /* PIC18F4620 control pins */
 #define TFT_RST LATEbits.LATE0
@@ -19,7 +19,7 @@
 #define TFT_DC_DIR TRISEbits.TRISE1
 #define TFT_CS_DIR TRISEbits.TRISE2
 
-#define RGB(R, G, B) ((uint16_t)((((uint16_t)(R) & 0xF8U) << 8) | (((uint16_t)(G) & 0xFCU) << 3) | (((uint16_t)(B)) >> 3)))
+#define RGB(R, G, B) ((uint16_t)((((uint16_t)(R) & 0xF8) << 8) | (((uint16_t)(G) & 0xFCU) << 3) | (((uint16_t)(B)) >> 3)))
 
 typedef enum
 {

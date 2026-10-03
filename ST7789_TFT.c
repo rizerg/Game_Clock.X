@@ -2,18 +2,17 @@
 #include "ST7789_TFT.h"
 #include "font.h"
 
-#define ST7789_SWRESET 0x01U
-#define ST7789_SLPOUT 0x11U
-#define ST7789_NORON 0x13U
-#define ST7789_INVON 0x21U
-#define ST7789_DISPON 0x29U
+#define ST7789_SWRESET 0x01
+#define ST7789_SLPOUT 0x11
+#define ST7789_NORON 0x13
+#define ST7789_INVON 0x21
+#define ST7789_DISPON 0x29
 #define ST7789_CASET 0x2AU
 #define ST7789_RASET 0x2BU
 #define ST7789_RAMWR 0x2CU
-#define ST7789_MADCTL 0x36U
+#define ST7789_MADCTL 0x36
 #define ST7789_COLMOD 0x3AU
 
-static void SPI_Init(void);
 static void SPI_Write(uint8_t data);
 static void ST7789_Command(uint8_t cmd);
 static void ST7789_Data(uint8_t data);
@@ -117,7 +116,7 @@ void ST7789_FillScreen(uint16_t color)
 	uint8_t	 hi = (uint8_t)(color >> 8);
 	uint8_t	 lo = (uint8_t)color;
 
-	ST7789_SetWindow(0, 0, TFT_WIDTH - 1U, TFT_HEIGHT - 1U);
+	ST7789_SetWindow(0, 0, TFT_WIDTH - 1, TFT_HEIGHT - 1);
 
 	TFT_DC = 1;
 	TFT_CS = 0;
@@ -153,7 +152,7 @@ void ST7789_DrawChar(unsigned char c, uint16_t x, uint16_t y, uint16_t color, ui
 	uint8_t				 blo = (uint8_t)backColor;
 	const unsigned char *glyph;
 
-	if ((c < 0x20U) || (c > 0xDFU))
+	if ((c < 0x20) || (c > 0xDFU))
 	{
 		c = '?';
 	}
@@ -163,19 +162,19 @@ void ST7789_DrawChar(unsigned char c, uint16_t x, uint16_t y, uint16_t color, ui
 	}
 
 	/* font192[文字コード-0x20][0..4] の5列x8bit形式 */
-	glyph = (const unsigned char *)font[c - 0x20U];
-	ST7789_SetWindow(x, y, x + 5U, y + 7U);
+	glyph = (const unsigned char *)font[c - 0x20];
+	ST7789_SetWindow(x, y, x + 5, y + 7);
 
 	TFT_DC = 1;
 	TFT_CS = 0;
-	for (row = 0; row < 8U; row++)
+	for (row = 0; row < 8; row++)
 	{
-		for (col = 0; col < 6U; col++)
+		for (col = 0; col < 6; col++)
 		{
 			uint8_t on = 0;
-			if (col < 5U)
+			if (col < 5)
 			{
-				on = (uint8_t)((glyph[col] >> row) & 0x01U);
+				on = (uint8_t)((glyph[col] >> row) & 0x01);
 			}
 			if (on)
 			{
@@ -204,21 +203,21 @@ void ST7789_String(const char *string, uint16_t x, uint16_t y, uint16_t color, u
 		if (*string == '\n')
 		{
 			x = 0;
-			y += 8U;
+			y += 8;
 		}
 		else
 		{
-			if (x + 5U >= TFT_WIDTH)
+			if (x + 5 >= TFT_WIDTH)
 			{
 				x = 0;
-				y += 8U;
+				y += 8;
 			}
-			if (y + 7U >= TFT_HEIGHT)
+			if (y + 7 >= TFT_HEIGHT)
 			{
 				break;
 			}
 			ST7789_DrawChar((unsigned char)*string, x, y, color, backColor);
-			x += 6U;
+			x += 6;
 		}
 		string++;
 	}
@@ -242,28 +241,28 @@ void ST7789_DrawCharSize(uint8_t c, uint16_t x, uint16_t y, uint16_t color, uint
 
 	const unsigned char *glyph;
 
-	if (size == 0U)
+	if (size == 0)
 	{
-		size = 1U;
+		size = 1;
 	}
 
 	/*
      * 5x8フォントなので、あまり大きくしすぎないように制限。
      * 必要なら値を変更可能。
      */
-	if (size > 8U)
+	if (size > 8)
 	{
-		size = 8U;
+		size = 8;
 	}
 
-	if ((c < 0x20U) || (c > 0xDFU))
+	if ((c < 0x20) || (c > 0xDFU))
 	{
 		c = (uint8_t)'?';
 	}
 
 	/* 文字本体5列＋文字間隔1列 */
-	width  = (uint16_t)6U * (uint16_t)size;
-	height = (uint16_t)8U * (uint16_t)size;
+	width  = (uint16_t)6 * (uint16_t)size;
+	height = (uint16_t)8 * (uint16_t)size;
 
 	/* 画面外に出る文字は描画しない */
 	if (x >= TFT_WIDTH || y >= TFT_HEIGHT)
@@ -287,9 +286,9 @@ void ST7789_DrawCharSize(uint8_t c, uint16_t x, uint16_t y, uint16_t color, uint
 	backHigh = (uint8_t)(backColor >> 8);
 	backLow	 = (uint8_t)(backColor & 0xFFU);
 
-	glyph = (const unsigned char *)&font[c - 0x20U][0];
+	glyph = (const unsigned char *)&font[c - 0x20][0];
 
-	ST7789_SetWindow(x, y, x + width - 1U, y + height - 1U);
+	ST7789_SetWindow(x, y, x + width - 1, y + height - 1);
 
 	TFT_DC = 1;
 	TFT_CS = 0;
@@ -298,28 +297,28 @@ void ST7789_DrawCharSize(uint8_t c, uint16_t x, uint16_t y, uint16_t color, uint
      * ST7789は、設定したウィンドウに対して
      * 左上から右方向、次に下方向の順で書き込む。
      */
-	for (sourceRow = 0U; sourceRow < 8U; sourceRow++)
+	for (sourceRow = 0; sourceRow < 8; sourceRow++)
 	{
 		/* 元フォントの1行を縦方向へ拡大 */
-		for (repeatY = 0U; repeatY < size; repeatY++)
+		for (repeatY = 0; repeatY < size; repeatY++)
 		{
 			/* フォント5列＋右側の空白1列 */
-			for (sourceCol = 0U; sourceCol < 6U; sourceCol++)
+			for (sourceCol = 0; sourceCol < 6; sourceCol++)
 			{
-				if (sourceCol < 5U)
+				if (sourceCol < 5)
 				{
-					pixelOn = (uint8_t)((glyph[sourceCol] >> sourceRow) & 0x01U);
+					pixelOn = (uint8_t)((glyph[sourceCol] >> sourceRow) & 0x01);
 				}
 				else
 				{
 					/* 6列目は文字間隔 */
-					pixelOn = 0U;
+					pixelOn = 0;
 				}
 
 				/* 元フォントの1ドットを水平方向へ拡大 */
-				for (repeatX = 0U; repeatX < size; repeatX++)
+				for (repeatX = 0; repeatX < size; repeatX++)
 				{
-					if (pixelOn != 0U)
+					if (pixelOn != 0)
 					{
 						SPI_Write(colorHigh);
 						SPI_Write(colorLow);
@@ -350,21 +349,21 @@ void ST7789_StringSize(const char *string, uint16_t x, uint16_t y, uint16_t colo
 		return;
 	}
 
-	if (size == 0U)
+	if (size == 0)
 	{
-		size = 1U;
+		size = 1;
 	}
 
-	if (size > 8U)
+	if (size > 8)
 	{
-		size = 8U;
+		size = 8;
 	}
 
 	startX = x;
 
-	charWidth = (uint16_t)6U * (uint16_t)size;
+	charWidth = (uint16_t)6 * (uint16_t)size;
 
-	charHeight = (uint16_t)8U * (uint16_t)size;
+	charHeight = (uint16_t)8 * (uint16_t)size;
 
 	while (*string != '\0')
 	{

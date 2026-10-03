@@ -167,6 +167,10 @@
 #define MCP_RX1IF 0x02
 #define MCP_TX0IF 0x04
 
+#define MCP_RX0OVR 0x40
+#define MCP_RX1OVR 0x80
+#define MCP_RXOVR_MASK (MCP_RX0OVR | MCP_RX1OVR)
+
 /* =========================
 * Receive message
 * ========================= */
@@ -202,6 +206,8 @@ typedef struct
 #define CAN_CMD_GAME_STOP 0x02		 /* ゲームの一時停止 */
 #define CAN_CMD_TURN_START 0x03		 /* ターン開始 */
 #define CAN_CMD_TURN_END 0x04		 /* ターン終了 */
+#define CAN_CMD_TURN_END_ACK 0x43	 /* ターン終了受信確認 */
+#define CAN_CMD_TURN_START_ACK 0x44	 /* ターン開始確認 */
 #define CAN_CMD_MODE_COUNT_DOWN 0x10 /* カウントダウンモード */
 #define CAN_CMD_MODE_COUNT_UP 0x11	 /* カウントアップモード */
 #define CAN_CMD_MODE_SETTING 0x12	 /* 設定モード */
@@ -217,6 +223,7 @@ typedef struct
 #define CAN_CMD_ASSIGN_TURN 0x33	 /* 順番確定通知 */
 #define CAN_CMD_GAME_START 0x40		 /* 状態確認用 */
 #define CAN_CMD_GAME_TIME_UP 0x41	 /* 時間切れ */
+#define CAN_CMD_GAME_READY 0x42		 /* ゲーム開始準備完了 */
 #define CAN_CMD_STATUS 0x50			 /* 状態確認用 */
 
 #define CAN_CMD_MASK 0x00FF0000UL /* コマンドのマスク値 */

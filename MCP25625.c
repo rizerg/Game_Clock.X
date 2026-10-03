@@ -4,6 +4,7 @@
 static uint8_t	SPI_Transfer(uint8_t data);
 static void		MCP25625_Reset(void);
 static uint32_t MCP25625_ReadRxExtendedId(uint8_t baseAddress);
+static void		MCP25625_ClearReceiveOverflow(void);
 
 static uint8_t SPI_Transfer(uint8_t data)
 {
@@ -19,6 +20,17 @@ static void MCP25625_Reset(void)
 	SPI_Transfer(MCP_CMD_RESET);
 
 	CAN_CS = 1;
+}
+
+static void MCP25625_ClearReceiveOverflow(void)
+{
+	uint8_t overflowFlags;
+
+	overflowFlags = MCP25625_Read(MCP_EFLG) & MCP_RXOVR_MASK;
+	if (overflowFlags != 0)
+	{
+		MCP25625_BitModify(MCP_EFLG, overflowFlags, 0x00);
+	}
 }
 
 /**
@@ -175,7 +187,7 @@ uint8_t MCP25625_Init(uint32_t maskId, uint32_t filterId)
 
 	/* OSC:16MHz, baudrate:100kbps, SamplePoint:75% */
 	MCP25625_Write(MCP_CNF1, 0x04);
-	MCP25625_Write(MCP_CNF2, 0xA4);
+	MCP25625_Write(MCP_CNF2, 0xAC);
 	MCP25625_Write(MCP_CNF3, 0x03);
 
 	/* RXB0マスク設定 */
@@ -397,6 +409,7 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 	preview_gie	   = INTCONbits.GIE;
 	INTCONbits.GIE = 0; /* 受取中の割り込み不許可 */
 
+	MCP25625_ClearReceiveOverflow();
 	flags = MCP25625_Read(MCP_CANINTF);
 
 	/* 受信データがなければ終了 */
@@ -421,6 +434,7 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 	if ((sidl & MCP_EXIDE) == 0)
 	{
 		MCP25625_BitModify(MCP_CANINTF, clearMask, 0x00);
+		MCP25625_ClearReceiveOverflow();
 		INTCONbits.GIE = preview_gie; /* 割り込み戻す */
 		return MCP_ERROR;
 	}
@@ -432,6 +446,7 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 	if (message->length > 8)
 	{
 		MCP25625_BitModify(MCP_CANINTF, clearMask, 0x00);
+		MCP25625_ClearReceiveOverflow();
 		INTCONbits.GIE = preview_gie; /* 割り込み戻す */
 		return MCP_ERROR;
 	}
@@ -449,6 +464,7 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 
 	/* 全データを読んだ後にRXIFをクリア */
 	MCP25625_BitModify(MCP_CANINTF, clearMask, 0x00);
+	MCP25625_ClearReceiveOverflow();
 	INTCONbits.GIE = preview_gie; /* 割り込み戻す */
 
 	return MCP_OK;

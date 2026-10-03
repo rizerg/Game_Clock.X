@@ -1,5 +1,5 @@
 /******************************************************************************
-    第64回技能五輪全国大会エレクトロニクス職種
+     第64回技能五輪全国大会エレクトロニクス職種
     競技3 2026/10/06実施
     Game Clock プログラム
     File name	: .c
@@ -87,11 +87,13 @@ uint8_t mode_select_slave(void)
 
 void game_mode_slave(uint8_t mode)
 {
-	ClockSettings settings	= { 0, 10, 0, CLOCK_RULE_NONE, 0 };
-	uint8_t		  ASSIGN_ID = 0;
-	uint8_t		  ret		= 0;
-	uint8_t		  paused	= 0;
-	uint32_t	  id		= 0;
+	ClockSettings settings		= { 0, 10, 0, CLOCK_RULE_NONE, 0 };
+	uint8_t		  ASSIGN_ID		= 0;
+	uint8_t		  ret			= 0;
+	uint8_t		  paused		= 0;
+	uint8_t		  game_end		= 0;
+	uint32_t	  id			= 0;
+	uint8_t		  turn_sequence = 0;
 
 	if (connection_mode_slave(&ASSIGN_ID))
 	{
@@ -114,13 +116,15 @@ void game_mode_slave(uint8_t mode)
 			timer.delay_flag   = 0;
 			timer.rule_seconds = 0;
 		}
+		id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_GAME_READY, ASSIGN_ID);
+		while (MCP25625_Send(id, 0, 0) != MCP_OK);
 		enable_extenal_INT_and_Timer(DISABLE);
 		enable_disp_seg(ENABLE);
 		while (1)
 		{
 			if (can_flag != 0)
 			{
-				if (MCP25625_Receive(&message) == MCP_OK)
+				while (MCP25625_Receive(&message) == MCP_OK)
 				{
 					can_flag = 0;
 
@@ -129,14 +133,26 @@ void game_mode_slave(uint8_t mode)
 						enable_extenal_INT_and_Timer(DISABLE);
 						paused = 1;
 					}
-					else if (message.command == CAN_CMD_TURN_START)
+					else if ((message.command == CAN_CMD_GAME_START) && (message.length >= 5))
 					{
-						if (!paused) timer.delay_ticks = timer.delay_flag ? (uint16_t)timer.rule_seconds * 100 : 0;
+						id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_GAME_READY, ASSIGN_ID);
+						while (MCP25625_Send(id, 0, 0) != MCP_OK);
+					}
+					else if ((message.command == CAN_CMD_TURN_START) && (message.length >= 1))
+					{
+						if (message.data[0] != turn_sequence)
+						{
+							turn_sequence = message.data[0];
+							if (!paused) timer.delay_ticks = timer.delay_flag ? (uint16_t)timer.rule_seconds * 100 : 0;
+						}
 						paused = 0;
 						enable_extenal_INT_and_Timer(ENABLE);
+						id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_TURN_START_ACK, ASSIGN_ID);
+						while (MCP25625_Send(id, &turn_sequence, 1) != MCP_OK);
 					}
 					else if (message.command == CAN_CMD_GAME_END)
 					{
+						game_end = 1;
 						break;
 					}
 					else
@@ -144,6 +160,7 @@ void game_mode_slave(uint8_t mode)
 					}
 					clear_message(&message);
 				}
+				if (game_end) break;
 			}
 
 
@@ -156,7 +173,7 @@ void game_mode_slave(uint8_t mode)
 					enable_extenal_INT_and_Timer(DISABLE);
 
 					id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_TURN_END, ASSIGN_ID);
-					while (MCP25625_Send(id, 0, 0) != MCP_OK);
+					while (MCP25625_Send(id, &turn_sequence, 1) != MCP_OK);
 				}
 			}
 		}
@@ -177,11 +194,12 @@ void mesurement_mode_slave(void)
 
 uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 {
-	uint16_t temp_id = 0;
-	uint32_t id		 = 0;
-	uint16_t i		 = 0;
-	uint8_t	 state	 = 0;
-	uint16_t ad_rand = 0;
+	uint16_t temp_id  = 0;
+	uint32_t id		  = 0;
+	uint16_t i		  = 0;
+	uint8_t	 state	  = 0;
+	uint16_t ad_rand  = 0;
+	uint16_t retry_ms = 0;
 
 
 	while (1)
@@ -196,7 +214,6 @@ uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 				if (message.command == CAN_CMD_GAME_END)
 				{
 					clear_message(&message);
-					MCP25625_BitModify(MCP_CANINTE, MCP_RX1IE, 0x00);
 					return 0;
 				}
 
@@ -212,50 +229,44 @@ uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 
 							/* オープンADポートを使って乱数生成 */
 							/* 乱数値で適当にディレイさせることで最初の通信衝突を回避したい */
-							do
+
+							for (uint16_t i = 0; i < 10; i++)
 							{
-								for (uint16_t i = 0; i < 10; i++)
-								{
-									ADCON0bits.CHS	  = i;
-									ADCON0bits.GODONE = 1;
-									while (ADCON0bits.GODONE != 0) continue;
-									ad_rand <<= 1;
-									ad_rand |= (ADRESL & 0x01);
-								}
-							} while (ad_rand == 0);
-							for (uint16_t i = 0; i < ad_rand; i++) __delay_us(10);
+								ADCON0bits.CHS	  = i;
+								ADCON0bits.GODONE = 1;
+								while (ADCON0bits.GODONE != 0) continue;
+								ad_rand <<= 1;
+								MCP25625_SetReceiveMask(1, (uint32_t)CAN_DEST_MASK);
+								for (uint16_t i = 0; i < ad_rand; i++) __delay_us(10);
 
-							/* 乱数値使って初期通信する */
-							/* 正式IDと被らないようにシフトさせておく */
-							temp_id = ad_rand << 6;
-							id		= CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_JOIN_REQUEST, temp_id);
-							while (MCP25625_Send(id, 0, 0) != MCP_OK);
-
-							while (MCP25625_SetReceiveMask(1, ((uint32_t)CAN_DEST_MASK << 24) | CAN_PARAMS_MASK) == MCP_ERROR);
-							while (MCP25625_SetReceiveFilter(2, ((uint32_t)CAN_DEST_CHILD << 24) | temp_id) == MCP_ERROR);
-
-							state++;
+								/* 乱数値使って初期通信する */
+								/* 正式IDと被らないようにシフトさせておく */
+								temp_id = ad_rand << 6;
+								MCP25625_SetReceiveMask(1, (uint32_t)CAN_DEST_MASK);
+								MCP25625_SetReceiveFilter(2, ((uint32_t)CAN_DEST_CHILD << 24) | temp_id);
+								id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_JOIN_REQUEST, temp_id);
+								while (MCP25625_Send(id, 0, 0) != MCP_OK);
+								retry_ms = 0;
+								state	 = 1;
+							}
 						}
 						break;
 					case 1:
-						if (message.command == CAN_CMD_ASSIGN_ID)
+						if ((message.command == CAN_CMD_ASSIGN_ID) && (0x02 <= message.data[0]) && (message.data[0] <= 8))
 						{
 							*ASSIGN_ID = message.data[0];
 							id		   = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_ASSIGN_ACK, temp_id);
 							while (MCP25625_Send(id, ASSIGN_ID, 1) != MCP_OK);
-
-							state++;
+							retry_ms = 0;
+							state	 = 2;
 						}
-						for (uint16_t i = 0; i < ad_rand; i++) __delay_us(10);
 						break;
 					case 2:
-						if (message.command == CAN_CMD_ASSIGN_COMMIT)
+						if ((message.command == CAN_CMD_ASSIGN_COMMIT) && (message.length >= 1) && (message.data[0] == *ASSIGN_ID))
 						{
-							while (MCP25625_SetReceiveFilter(2, ((uint32_t)CAN_DEST_CHILD << 24) | *ASSIGN_ID) == MCP_ERROR);
-
-							state++;
+							MCP25625_SetReceiveFilter(2, ((uint32_t)CAN_DEST_CHILD << 24) | *ASSIGN_ID);
+							state = 3;
 						}
-						for (uint16_t i = 0; i < ad_rand; i++) __delay_us(10);
 						break;
 					case 3:
 						if (message.command == CAN_CMD_JOIN_COMPLETE)
@@ -268,64 +279,76 @@ uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 				clear_message(&message);
 			}
 		}
+		if ((state == 1) || (state == 2))
+		{
+			retry_ms++;
+			if (retry_ms >= 100)
+			{
+				if (state == 1)
+				{
+					id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_JOIN_REQUEST, temp_id);
+					while (MCP25625_Send(id, 0, 0) != MCP_OK);
+				}
+				else
+				{
+					id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_ASSIGN_ACK, temp_id);
+					while (MCP25625_Send(id, ASSIGN_ID, 1) != MCP_OK);
+				}
+				retry_ms = 0;
+			}
+			__delay_ms(1);
+		}
 	}
 }
 
-
 uint8_t decide_turn_slave(uint8_t* ASSIGN_ID, ClockSettings* settings)
 {
-	uint32_t id	   = 0;
-	uint16_t i	   = 0;
-	uint8_t	 state = 0;
+	uint32_t id		  = 0;
+	uint8_t	 state	  = 0;
+	uint16_t retry_ms = 0;
 
 	while (1)
 	{
-		/* 接続待機 */
 		if (can_flag != 0)
 		{
 			if (MCP25625_Receive(&message) == MCP_OK)
 			{
 				can_flag = 0;
-
 				if (message.command == CAN_CMD_TURN_CLEAR)
 				{
 					clear_message(&message);
 					state			  = 1;
+					LATD			  = 0xB0;
+					retry_ms		  = 0;
 					INTCONbits.INT0IF = 0;
 					INTCONbits.INT0IE = 1;
 				}
-
 				switch (state)
 				{
 					case 0:
 						if (message.command == CAN_CMD_DECIDE_TURN)
 						{
-							state++;
+							state			  = 1;
+							retry_ms		  = 0;
 							INTCONbits.INT0IF = 0;
 							INTCONbits.INT0IE = 1;
 						}
-
 						break;
-
 					case 2:
-						if (message.command == CAN_CMD_ASSIGN_TURN)
+						if ((message.command == CAN_CMD_ASSIGN_TURN) && (message.length >= 1))
 						{
-							state++;
-							LATD = 0xB0 | message.data[0];
+							state = 3;
+							LATD  = 0xB0 | message.data[0];
 						}
 						break;
-
 					case 3:
-						if (message.command == CAN_CMD_GAME_START)
+						if ((message.command == CAN_CMD_GAME_START) && (message.length >= 5))
 						{
-							if (message.length >= 5)
-							{
-								settings->hours		   = message.data[0];
-								settings->minutes	   = message.data[1];
-								settings->seconds	   = message.data[2];
-								settings->rule		   = message.data[3];
-								settings->rule_seconds = message.data[4];
-							}
+							settings->hours		   = message.data[0];
+							settings->minutes	   = message.data[1];
+							settings->seconds	   = message.data[2];
+							settings->rule		   = message.data[3];
+							settings->rule_seconds = message.data[4];
 							return 1;
 						}
 						break;
@@ -333,22 +356,28 @@ uint8_t decide_turn_slave(uint8_t* ASSIGN_ID, ClockSettings* settings)
 				clear_message(&message);
 			}
 		}
-		if (state == 1)
+		if ((state == 1) && main_sw_flag)
 		{
-			if (main_sw_flag)
+			state	 = 2;
+			retry_ms = 0;
+			enable_extenal_INT_and_Timer(DISABLE);
+			buzzer();
+			id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_TURN_QUEUE, *ASSIGN_ID);
+			while (MCP25625_Send(id, 0, 0) != MCP_OK);
+		}
+		if (state == 2)
+		{
+			retry_ms++;
+			if (retry_ms >= 100)
 			{
-				state++;
-				enable_extenal_INT_and_Timer(DISABLE);
-				buzzer();
-
 				id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_TURN_QUEUE, *ASSIGN_ID);
 				while (MCP25625_Send(id, 0, 0) != MCP_OK);
+				retry_ms = 0;
 			}
+			__delay_ms(1);
 		}
 	}
 }
-
-
 /* --- メイン関数 --- */
 void slave_sequence(void)
 {
