@@ -492,9 +492,10 @@ void game_mode(uint8_t mode)
 					/* 受信処理 */
 					if (can_flag != 0)
 					{
-						can_flag = 0;
 						if (MCP25625_Receive(&message) == MCP_OK)
 						{
+							can_flag = 0;
+
 							/* 次の手番 */
 							if (message.command == CAN_CMD_TURN_END)
 							{
@@ -598,18 +599,19 @@ uint8_t connection_mode(uint8_t* num)
 		/* 受信処理 */
 		if (can_flag != 0)
 		{
-			can_flag = 0;
 			if (MCP25625_Receive(&message) == MCP_OK)
 			{
+				can_flag = 0;
+
 				if (message.command == CAN_CMD_JOIN_REQUEST)
 				{
 					/* 参加要求があった場合、送られてきた仮IDをリストに追加 */
-					for (i = 0; i < deviceNum; i++)
+					for (i = 0; i < deviceNum + 1; i++)
 					{
-						if (message.targetId == temp_list[i]) break;
+						if (message.targetId == temp_list[deviceNum]) break;
 					}
 
-					if ((i == deviceNum) && (deviceNum < (sizeof(ASSIGN_ID) / sizeof(ASSIGN_ID[0]))))
+					if (i > deviceNum)
 					{
 						/* リストにない仮IDだった場合、正式なIDを割り当てて送信 */
 						/** @todo 仮IDとASSIGN_IDが被らないように */
@@ -620,10 +622,9 @@ uint8_t connection_mode(uint8_t* num)
 						while (MCP25625_Send(id, &ASSIGN_ID[deviceNum], 1) != MCP_OK);
 						deviceNum++;
 					}
-					else if ((i < deviceNum) && (resister_state[i] != REGISTER_COMPLETE))
+					else
 					{
-						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_ID, temp_list[i]);
-						while (MCP25625_Send(id, &ASSIGN_ID[i], 1) != MCP_OK);
+						/** @todo 再送要求 */
 					}
 				}
 				else if (message.command == CAN_CMD_ASSIGN_ACK)
@@ -631,18 +632,19 @@ uint8_t connection_mode(uint8_t* num)
 					/* 子機が正式IDを正常に受信して、返答してきた */
 					for (i = 0; i < deviceNum; i++)
 					{
-						if ((message.targetId == temp_list[i]) && (message.length > 0) && (message.data[0] == ASSIGN_ID[i])) break;
+						if (message.targetId == temp_list[i])
+							if (message.data[0] == ASSIGN_ID[i]) break;
 					}
 
 					if (i < deviceNum)
 					{
-						id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_COMMIT, message.targetId);
-						while (MCP25625_Send(id, &ASSIGN_ID[i], 1) != MCP_OK);
-						if (resister_state[i] != REGISTER_COMPLETE)
+						if (resister_state[deviceNum] != REGISTER_COMPLETE)
 						{
-							resister_state[i] = REGISTER_COMPLETE;
+							resister_state[deviceNum] = REGISTER_COMPLETE;
 							/* 返答者の仮IDが割り当てた正式IDと一致していた */
 							/* 登録完了を通知する */
+							id = CAN_CreateExtendedId(CAN_DEST_CHILD, CAN_CMD_ASSIGN_COMMIT, message.targetId);
+							while (MCP25625_Send(id, &ASSIGN_ID[deviceNum], 1) != MCP_OK);
 							assignNum++;
 							str[0] = assignNum + 0x30;
 							ST7789_StringSize(str, 186, 100, COLOR_BLACK, COLOR_WHITE, 2);
@@ -665,7 +667,7 @@ uint8_t connection_mode(uint8_t* num)
 		{
 			sw_flag.data.single.a = 0;
 
-			if ((assignNum > 0) && (assignNum == deviceNum))
+			if (assignNum > 0)
 			{
 				*num = assignNum;
 				for (uint16_t i = 0; i < assignNum; i++)
@@ -723,9 +725,10 @@ uint8_t decide_turn(uint8_t* turn_order, uint8_t member_num)
 			/* 受信処理 */
 			if (can_flag != 0)
 			{
-				can_flag = 0;
 				if (MCP25625_Receive(&message) == MCP_OK)
 				{
+					can_flag = 0;
+
 					if (message.command == CAN_CMD_TURN_QUEUE)
 					{
 						/* 子機の手番を格納 */

@@ -53,9 +53,10 @@ uint8_t mode_select_slave(void)
 		/* モード通知待機 */
 		if (can_flag != 0)
 		{
-			can_flag = 0;
 			if (MCP25625_Receive(&message) == MCP_OK)
 			{
+				can_flag = 0;
+
 				switch (message.command)
 				{
 					case CAN_CMD_MODE_COUNT_DOWN:
@@ -119,9 +120,10 @@ void game_mode_slave(uint8_t mode)
 		{
 			if (can_flag != 0)
 			{
-				can_flag = 0;
 				if (MCP25625_Receive(&message) == MCP_OK)
 				{
+					can_flag = 0;
+
 					if (message.command == CAN_CMD_GAME_STOP)
 					{
 						enable_extenal_INT_and_Timer(DISABLE);
@@ -187,9 +189,10 @@ uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 		/* 接続待機 */
 		if (can_flag != 0)
 		{
-			can_flag = 0;
 			if (MCP25625_Receive(&message) == MCP_OK)
 			{
+				can_flag = 0;
+
 				if (message.command == CAN_CMD_GAME_END)
 				{
 					clear_message(&message);
@@ -225,11 +228,11 @@ uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 							/* 乱数値使って初期通信する */
 							/* 正式IDと被らないようにシフトさせておく */
 							temp_id = ad_rand << 6;
+							id		= CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_JOIN_REQUEST, temp_id);
+							while (MCP25625_Send(id, 0, 0) != MCP_OK);
+
 							while (MCP25625_SetReceiveMask(1, ((uint32_t)CAN_DEST_MASK << 24) | CAN_PARAMS_MASK) == MCP_ERROR);
 							while (MCP25625_SetReceiveFilter(2, ((uint32_t)CAN_DEST_CHILD << 24) | temp_id) == MCP_ERROR);
-
-							id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_JOIN_REQUEST, temp_id);
-							while (MCP25625_Send(id, 0, 0) != MCP_OK);
 
 							state++;
 						}
@@ -242,12 +245,6 @@ uint8_t connection_mode_slave(uint8_t* ASSIGN_ID)
 							while (MCP25625_Send(id, ASSIGN_ID, 1) != MCP_OK);
 
 							state++;
-						}
-						else
-						{
-							/* 1回のJOIN_REQUESTが欠けても再送して接続を継続する */
-							id = CAN_CreateExtendedId(CAN_DEST_MASTER, CAN_CMD_JOIN_REQUEST, temp_id);
-							while (MCP25625_Send(id, 0, 0) != MCP_OK);
 						}
 						for (uint16_t i = 0; i < ad_rand; i++) __delay_us(10);
 						break;
@@ -286,9 +283,10 @@ uint8_t decide_turn_slave(uint8_t* ASSIGN_ID, ClockSettings* settings)
 		/* 接続待機 */
 		if (can_flag != 0)
 		{
-			can_flag = 0;
 			if (MCP25625_Receive(&message) == MCP_OK)
 			{
+				can_flag = 0;
+
 				if (message.command == CAN_CMD_TURN_CLEAR)
 				{
 					clear_message(&message);

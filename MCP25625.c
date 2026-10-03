@@ -4,7 +4,6 @@
 static uint8_t	SPI_Transfer(uint8_t data);
 static void		MCP25625_Reset(void);
 static uint32_t MCP25625_ReadRxExtendedId(uint8_t baseAddress);
-static void		MCP25625_ReassertReceiveInterrupt(void);
 
 static uint8_t SPI_Transfer(uint8_t data)
 {
@@ -20,11 +19,6 @@ static void MCP25625_Reset(void)
 	SPI_Transfer(MCP_CMD_RESET);
 
 	CAN_CS = 1;
-}
-
-static void MCP25625_ReassertReceiveInterrupt(void)
-{
-	if ((MCP25625_Read(MCP_CANINTF) & (MCP_RX0IF | MCP_RX1IF)) != 0) INTCON3bits.INT1IF = 1;
 }
 
 /**
@@ -427,7 +421,6 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 	if ((sidl & MCP_EXIDE) == 0)
 	{
 		MCP25625_BitModify(MCP_CANINTF, clearMask, 0x00);
-		MCP25625_ReassertReceiveInterrupt();
 		INTCONbits.GIE = preview_gie; /* 割り込み戻す */
 		return MCP_ERROR;
 	}
@@ -439,7 +432,6 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 	if (message->length > 8)
 	{
 		MCP25625_BitModify(MCP_CANINTF, clearMask, 0x00);
-		MCP25625_ReassertReceiveInterrupt();
 		INTCONbits.GIE = preview_gie; /* 割り込み戻す */
 		return MCP_ERROR;
 	}
@@ -457,7 +449,6 @@ uint8_t MCP25625_Receive(MCP25625_Message *message)
 
 	/* 全データを読んだ後にRXIFをクリア */
 	MCP25625_BitModify(MCP_CANINTF, clearMask, 0x00);
-	MCP25625_ReassertReceiveInterrupt();
 	INTCONbits.GIE = preview_gie; /* 割り込み戻す */
 
 	return MCP_OK;
